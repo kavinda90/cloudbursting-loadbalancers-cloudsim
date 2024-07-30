@@ -25,7 +25,9 @@ package org.cloudsimplus.examples.project;
 
 import ch.qos.logback.classic.Level;
 import org.cloudsimplus.allocationpolicies.migration.VmAllocationPolicyMigration;
+import org.cloudsimplus.allocationpolicies.migration.VmAllocationPolicyMigrationBestFitStaticThreshold;
 import org.cloudsimplus.allocationpolicies.migration.VmAllocationPolicyMigrationFirstFitStaticThreshold;
+import org.cloudsimplus.allocationpolicies.migration.VmAllocationPolicyMigrationWorstFitStaticThreshold;
 import org.cloudsimplus.brokers.DatacenterBroker;
 import org.cloudsimplus.brokers.DatacenterBrokerSimple;
 import org.cloudsimplus.builders.tables.CloudletsTableBuilder;
@@ -136,7 +138,7 @@ public final class HybridCloudLoadBalancerExample {
      *
      * <p>The total number of items define the number of Hosts to create.</p>
      */
-    private static final int[][] DC_HOST_PES = {{4, 5}, {8, 8, 8, 16}};
+    private static final int[][] DC_HOST_PES = {{4, 5}, {4, 4, 4, 8}};
 
     /**
      * The percentage of host CPU usage that trigger VM migration
@@ -168,7 +170,7 @@ public final class HybridCloudLoadBalancerExample {
      * Since VMs in this example are created with 2000 MB of RAM, any migration
      * will take 2 seconds to finish, as can be seen in the logs.
      */
-    private static final long   HOST_BW = 16_000L; //Mbps
+    private static final long   HOST_BW = 24_000L; //Mbps
 
     private static final int    HOST_MIPS = 1000; //for each PE
 
@@ -176,7 +178,7 @@ public final class HybridCloudLoadBalancerExample {
      * RAM capacity for created Hosts.
      * The length of this array must be the length of the largest row on {@link #DC_HOST_PES} matrix.
      */
-    private static final long[] HOST_RAM = {50_000, 50_000, 50_000, 50_000}; //host memory (MB)
+    private static final long[] HOST_RAM = {100_000, 100_000, 100_000, 100_000}; //host memory (MB)
 
     private static final long   HOST_STORAGE = 1_000_000; //host storage (MB)
 
@@ -187,11 +189,11 @@ public final class HybridCloudLoadBalancerExample {
      * <p>The length of this matrix (number of rows) must be equal to the number of datacenters,
      * defined by the length of {@link #DC_HOST_PES}.</p>
      */
-    private static final int[][] VM_PES = {{3, 2, 2}, {4, 4, 4}};
+    private static final int[][] VM_PES = {{2,2,2,2,2,2,2}, {}};
 
     private static final int    VM_MIPS = 1000; //for each PE
     private static final long   VM_SIZE = 100_000; //image size (MB)
-    private static final int    VM_RAM  = 10_000; //VM memory (MB)
+    private static final int    VM_RAM  = 6_000; //VM memory (MB)
     private static final long   VM_BW   = 2000; //Mbps
 
     private static final long   CLOUDLET_LENGTH = 50_000;
@@ -276,7 +278,7 @@ public final class HybridCloudLoadBalancerExample {
      */
     private VmAllocationPolicyMigration createVmAllocationPolicy() {
         final var vmSelection = new VmSelectionPolicyMinimumUtilization();
-        final var vmAllocation = new VmAllocationPolicyMigrationFirstFitStaticThreshold(vmSelection, 0.9);
+        final var vmAllocation = new VmAllocationPolicyDynamicRoundRobinCustom(vmSelection, 0.9);
 
         vmAllocation.setUnderUtilizationThreshold(HOST_UNDER_UTILIZATION_THRESHOLD_FOR_VM_MIGRATION);
         return vmAllocation;
@@ -351,7 +353,7 @@ public final class HybridCloudLoadBalancerExample {
 
         System.out.printf("# %d VMs submitted to %s have been created. VMs: %s.%n", broker.getVmCreatedList().size(), broker, vmIds);
         datacenterList.stream()
-                .map(dc -> (VmAllocationPolicyMigrationFirstFitStaticThreshold)dc.getVmAllocationPolicy())
+                .map(dc -> (VmAllocationPolicyDynamicRoundRobinCustom)dc.getVmAllocationPolicy())
                 .forEach(policy -> policy.setOverUtilizationThreshold(HOST_OVER_UTILIZATION_THRESHOLD_FOR_VM_MIGRATION));
         broker.removeOnVmsCreatedListener(info.getListener());
     }
@@ -360,10 +362,10 @@ public final class HybridCloudLoadBalancerExample {
         final var cloudletList = new ArrayList<Cloudlet>(VM_PES.length);
         final UtilizationModelDynamic um = createCpuUtilizationModel(CLOUDLET_INITIAL_CPU_PERCENTAGE, 1);
         for(final var vm: broker.getVmWaitingList()){
-            for(int i=0; i<2; i++) {
+//            for(int i=0; i<2; i++) {
                 final var cloudlet = createCloudlet(vm, um);
                 cloudletList.add(cloudlet);
-            }
+//            }
 
         }
 
