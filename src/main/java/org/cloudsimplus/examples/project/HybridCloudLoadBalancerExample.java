@@ -242,6 +242,9 @@ public final class HybridCloudLoadBalancerExample {
         this.brokerList = createBrokers();
         createVmsAndCloudlets();
 
+        // Allocate VMs to hosts using Min-Min
+//        allocateVmsToHosts();
+
         simulation.start();
 
         printResults();
@@ -278,7 +281,7 @@ public final class HybridCloudLoadBalancerExample {
      */
     private VmAllocationPolicyMigration createVmAllocationPolicy() {
         final var vmSelection = new VmSelectionPolicyMinimumUtilization();
-        final var vmAllocation = new VmAllocationPolicyDynamicRoundRobinCustom(vmSelection, 0.9);
+        final var vmAllocation = new VmAllocationPolicyHoneyBeeCustom(vmSelection, 0.9);
 
         vmAllocation.setUnderUtilizationThreshold(HOST_UNDER_UTILIZATION_THRESHOLD_FOR_VM_MIGRATION);
         return vmAllocation;
@@ -353,7 +356,7 @@ public final class HybridCloudLoadBalancerExample {
 
         System.out.printf("# %d VMs submitted to %s have been created. VMs: %s.%n", broker.getVmCreatedList().size(), broker, vmIds);
         datacenterList.stream()
-                .map(dc -> (VmAllocationPolicyDynamicRoundRobinCustom)dc.getVmAllocationPolicy())
+                .map(dc -> (VmAllocationPolicyHoneyBeeCustom)dc.getVmAllocationPolicy())
                 .forEach(policy -> policy.setOverUtilizationThreshold(HOST_OVER_UTILIZATION_THRESHOLD_FOR_VM_MIGRATION));
         broker.removeOnVmsCreatedListener(info.getListener());
     }
@@ -514,5 +517,14 @@ public final class HybridCloudLoadBalancerExample {
         }
 
         return peList;
+    }
+
+    public void allocateVmsToHosts() {
+        for (Datacenter datacenter : datacenterList) {
+            VmAllocationPolicyMinMinCustom allocationPolicy = (VmAllocationPolicyMinMinCustom) datacenter.getVmAllocationPolicy();
+            for (DatacenterBroker broker : brokerList) {
+                allocationPolicy.allocateHostForVmInternal(broker.getVmWaitingList());
+            }
+        }
     }
 }
