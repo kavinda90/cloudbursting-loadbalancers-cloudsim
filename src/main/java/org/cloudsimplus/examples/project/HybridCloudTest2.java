@@ -56,7 +56,7 @@ import static java.util.Comparator.comparingDouble;
 /**
  * An example that balances load by dynamically creating VMs,
  * according to the arrival of Cloudlets.
- * Cloudlets are {@link #createNewCloudlets(EventInfo) dynamically created and submitted to the broker
+ * Cloudlets are {@link #createNewComputeCloudlets(EventInfo) dynamically created and submitted to the broker
  * at specific time intervals}.
  *
  * <p>A {@link HorizontalVmScalingSimple}
@@ -102,7 +102,6 @@ public class HybridCloudTest2 {
      */
     private static final int SCHEDULING_INTERVAL = 2;
 
-    private static final int MAX_TIME = 200;
 
     private static final double VM_OVERLOAD_THRESHOLD = 0.7;
     private static final double DC_OVERLOAD_THRESHOLD = 0.7;
@@ -115,9 +114,8 @@ public class HybridCloudTest2 {
 //    private static final int HOSTS = 2;
 //    private static final int HOST_PES = 8;
 
-    private static final int[][] DC_HOST_PES = {{16, 8, 32}, {16, 32, 16, 32}};
     private static final int VMS = 4;
-    private static final int CLOUDLETS = 10;
+    private static final int CLOUDLETS = 4;
     private final CloudSimPlus simulation;
     private final DatacenterBroker broker0;
     private final List<Vm> vmList;
@@ -126,7 +124,10 @@ public class HybridCloudTest2 {
     /**
      * Different lengths that will be randomly assigned to created Cloudlets.
      */
-    private static final long[] CLOUDLET_LENGTHS = {2000, 4000, 10000, 16000, 2000, 30000, 20000, 100000};
+    private static final long[] CLOUDLET_COMPUTE_LENGTHS = {1000000, 1200000, 2000000, 2500000, 1700000, 900000, 1500000};
+    private static final long[] CLOUDLET_DATA_LENGTHS = {10000, 15000, 20000, 27000, 8000, 6000, 30000};
+    private static final long[] CLOUDLET_MIX_LENGTHS = {50000, 60000, 70000, 45000, 67000, 55000, 37000};
+
     private final ContinuousDistribution rand;
 
     private int createdCloudlets;
@@ -157,6 +158,13 @@ public class HybridCloudTest2 {
     private static final double MUTATION_RATE = 0.01;
     private static final double CROSSOVER_RATE = 0.9;
 
+
+    private int[][] DC_HOST_PES = {{16, 32, 16, 32}, {16, 32, 16, 64, 32}};
+    private static final String TYPE = "Compute";
+    private static final int DC_PES_TYPE = 4;
+    private static final int MAX_CLOUDLETS = 180;
+    private static final int MAX_TIME = 500;
+
     public static void main(String[] args) {
         new org.cloudsimplus.examples.project.HybridCloudTest2();
     }
@@ -172,7 +180,19 @@ public class HybridCloudTest2 {
         /*You can remove the seed parameter to get a dynamic one, based on current computer time.
          * With a dynamic seed you will get different results at each simulation run.*/
         final long seed = 1;
-        rand = new UniformDistr(0, CLOUDLET_LENGTHS.length, seed);
+
+        if (DC_PES_TYPE == 0) {
+            DC_HOST_PES = new int[][]{{16, 32, 16, 32}, {16, 32, 16, 32, 64}};
+        } else if (DC_PES_TYPE == 1) {
+            DC_HOST_PES = new int[][]{{16, 32, 16, 32}, {8, 32, 16, 16, 48}};
+        } else if (DC_PES_TYPE == 2) {
+            DC_HOST_PES = new int[][]{{16, 32, 16, 32}, {32, 16, 8, 32, 32}};
+        } else if (DC_PES_TYPE == 3){
+            DC_HOST_PES = new int[][]{{16, 32, 16, 32}, {16, 16, 16, 32, 64}};
+        } else {
+            DC_HOST_PES = new int[][]{{16, 32, 16, 32}, {32, 32, 16, 16, 8}};
+        }
+
 //        rand = new UniformDistr(0, CLOUDLET_LENGTHS.length);
         vmList = new ArrayList<>(VMS);
         cloudletList = new ArrayList<>(CLOUDLETS);
@@ -181,7 +201,20 @@ public class HybridCloudTest2 {
         this.random = new Random();
 
         simulation = new CloudSimPlus();
-        simulation.addOnClockTickListener(this::createNewCloudlets);
+        if(TYPE.equals("Compute")) {
+            rand = new UniformDistr(0, CLOUDLET_COMPUTE_LENGTHS.length, seed);
+            simulation.addOnClockTickListener(this::createNewComputeCloudlets);
+
+        } else if (TYPE.equals("Data")) {
+            rand = new UniformDistr(0, CLOUDLET_DATA_LENGTHS.length, seed);
+            simulation.addOnClockTickListener(this::createNewDataCloudlets);
+
+        } else {
+            rand = new UniformDistr(0, CLOUDLET_MIX_LENGTHS.length, seed);
+            simulation.addOnClockTickListener(this::createNewMixCloudlets);
+
+        }
+
 //        simulation.addOnClockTickListener(this::onClockTickListener);
 
         datacenterList = createDatacenters();
@@ -195,11 +228,11 @@ public class HybridCloudTest2 {
          * are finished and there is no waiting Cloudlet.
          * @see DatacenterBroker#setVmDestructionDelayFunction(Function)
          * */
-        broker0.setVmDestructionDelay(10.0);
+        broker0.setVmDestructionDelay(30.0);
 
         vmList.addAll(createListOfScalableVms(VMS));
 
-        createCloudletList();
+        createCloudletList(TYPE);
 //        createCloudletListsWithDifferentDelays();
         broker0.submitVmList(vmList);
         broker0.submitCloudletList(cloudletList);
@@ -327,7 +360,7 @@ public class HybridCloudTest2 {
 
         new CloudletsTableBuilder(cloudletFinishedList).build();
 
-        printHostStateHistory();
+//        printHostStateHistory();
     }
     private void printHostStateHistory() {
         System.out.printf(
@@ -343,9 +376,15 @@ public class HybridCloudTest2 {
     }
 
 
-    private void createCloudletList() {
+    private void createCloudletList(String type) {
         for (int i = 0; i < CLOUDLETS; i++) {
-            cloudletList.add(createCloudlet(i*2));
+            if(type.equals("compute")) {
+                cloudletList.add(createComputeCloudlet(i*2));
+            } else if (type.equals("data")) {
+                cloudletList.add(createDataCloudlet(i*2));
+            } else {
+                cloudletList.add(createMixCloudlet(i*2));
+            }
         }
     }
 
@@ -357,16 +396,54 @@ public class HybridCloudTest2 {
      *
      * @param info the information about the OnClockTick event that has happened
      */
-    private void createNewCloudlets(final EventInfo info) {
+    private void createNewComputeCloudlets(final EventInfo info) {
         final long time = (long) info.getTime();
         if (time % 10 == 0 && time <= MAX_TIME) {
             final int cloudletsNumber = 4;
             System.out.printf("\t#Creating %d Cloudlets at time %d.%n", cloudletsNumber, time);
             final List<Cloudlet> newCloudlets = new ArrayList<>(cloudletsNumber);
             for (int i = 0; i < cloudletsNumber; i++) {
-                final var cloudlet = createCloudlet(i*2);
-                cloudletList.add(cloudlet);
-                newCloudlets.add(cloudlet);
+                if (cloudletList.size() < MAX_CLOUDLETS) {
+                    final var cloudlet = createComputeCloudlet(i*2);
+                    cloudletList.add(cloudlet);
+                    newCloudlets.add(cloudlet);
+                }
+            }
+
+            broker0.submitCloudletList(newCloudlets);
+        }
+    }
+
+    private void createNewDataCloudlets(final EventInfo info) {
+        final long time = (long) info.getTime();
+        if (time % 10 == 0 && time <= MAX_TIME) {
+            final int cloudletsNumber = 4;
+            System.out.printf("\t#Creating %d Cloudlets at time %d.%n", cloudletsNumber, time);
+            final List<Cloudlet> newCloudlets = new ArrayList<>(cloudletsNumber);
+            for (int i = 0; i < cloudletsNumber; i++) {
+                if (cloudletList.size() < MAX_CLOUDLETS) {
+                    final var cloudlet = createDataCloudlet(i*2);
+                    cloudletList.add(cloudlet);
+                    newCloudlets.add(cloudlet);
+                }
+            }
+
+            broker0.submitCloudletList(newCloudlets);
+        }
+    }
+
+    private void createNewMixCloudlets(final EventInfo info) {
+        final long time = (long) info.getTime();
+        if (time % 10 == 0 && time <= MAX_TIME) {
+            final int cloudletsNumber = 4;
+            System.out.printf("\t#Creating %d Cloudlets at time %d.%n", cloudletsNumber, time);
+            final List<Cloudlet> newCloudlets = new ArrayList<>(cloudletsNumber);
+            for (int i = 0; i < cloudletsNumber; i++) {
+                if (cloudletList.size() < MAX_CLOUDLETS) {
+                    final var cloudlet = createMixCloudlet(i*2);
+                    cloudletList.add(cloudlet);
+                    newCloudlets.add(cloudlet);
+                }
             }
 
             broker0.submitCloudletList(newCloudlets);
@@ -442,7 +519,7 @@ public class HybridCloudTest2 {
         final var distribution = index % 2 == 0 ? DatacenterCharacteristics.Distribution.PRIVATE : DatacenterCharacteristics.Distribution.PUBLIC;
         final var newHostList = new ArrayList<Host>(DC_HOST_PES[index].length);
         final var allocationPolicy = new VmAllocationPolicyRoundRobin();
-        allocationPolicy.setFindHostForVmFunction(this::findLeastConnectionHostForVm);
+//        allocationPolicy.setFindHostForVmFunction(this::findGeneticHostForVm);
         for (int i = 0; i < DC_HOST_PES[index].length; i++) {
             newHostList.add(createHost(DC_HOST_PES[index][i]));
         }
@@ -613,20 +690,52 @@ public class HybridCloudTest2 {
      */
     private Vm createVm() {
         final int id = createsVms++;
-        return new VmSimple(id, 1000, 8)
+        return new VmSimple(id, 1000, 4)
                 .setRam(512).setBw(1000).setSize(10000)
                 .setCloudletScheduler(new CloudletSchedulerTimeShared());
     }
 
-    private Cloudlet createCloudlet(int delay) {
+    private Cloudlet createComputeCloudlet(int delay) {
         final int id = createdCloudlets++;
         final var utilizadionModelDynamic = new UtilizationModelDynamic(0.1);
 
         //randomly selects a length for the cloudlet
-        final long length = CLOUDLET_LENGTHS[(int) rand.sample()];
+        final long length = CLOUDLET_COMPUTE_LENGTHS[(int) rand.sample()];
         final var cl =  new CloudletSimple(id, length, 2)
-                .setFileSize(1024)
-                .setOutputSize(1024)
+                .setFileSize(300)
+                .setOutputSize(300)
+                .setUtilizationModelBw(utilizadionModelDynamic)
+                .setUtilizationModelRam(utilizadionModelDynamic)
+                .setUtilizationModelCpu(new UtilizationModelFull());
+        cl.setSubmissionDelay(delay);
+        return cl;
+    }
+
+    private Cloudlet createDataCloudlet(int delay) {
+        final int id = createdCloudlets++;
+        final var utilizadionModelDynamic = new UtilizationModelDynamic(0.1);
+
+        //randomly selects a length for the cloudlet
+        final long length = CLOUDLET_DATA_LENGTHS[(int) rand.sample()];
+        final var cl =  new CloudletSimple(id, length, 2)
+                .setFileSize(1000000)
+                .setOutputSize(1000000)
+                .setUtilizationModelBw(utilizadionModelDynamic)
+                .setUtilizationModelRam(utilizadionModelDynamic)
+                .setUtilizationModelCpu(new UtilizationModelFull());
+        cl.setSubmissionDelay(delay);
+        return cl;
+    }
+
+    private Cloudlet createMixCloudlet(int delay) {
+        final int id = createdCloudlets++;
+        final var utilizadionModelDynamic = new UtilizationModelDynamic(0.1);
+
+        //randomly selects a length for the cloudlet
+        final long length = CLOUDLET_MIX_LENGTHS[(int) rand.sample()];
+        final var cl =  new CloudletSimple(id, length, 2)
+                .setFileSize(500000)
+                .setOutputSize(500000)
                 .setUtilizationModelBw(utilizadionModelDynamic)
                 .setUtilizationModelRam(utilizadionModelDynamic)
                 .setUtilizationModelCpu(new UtilizationModelFull());
@@ -644,7 +753,7 @@ public class HybridCloudTest2 {
             System.out.println("Checking host: " + host + " utlization " + host.getCpuPercentUtilization());
             if (host.isSuitableForVm(vm) && host.getCpuPercentUtilization() < DC_OVERLOAD_THRESHOLD) {
                 System.out.println("Host " + host + " is suitable for VM " + vm.getId());
-                if (leastHost == null || activeVms.size() < getActiveVms(leastHost.getVmList()).size()) {
+                if (leastHost == null || host.getCpuMipsUtilization() < leastHost.getCpuMipsUtilization()) {
                     leastHost = host;
                 }
             }
