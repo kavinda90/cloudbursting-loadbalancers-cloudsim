@@ -168,8 +168,8 @@ public class HybridCloudTest2 {
 
     private int[][] DC_HOST_PES = {{16, 32, 16, 32}, {16, 32, 16, 64, 32}};
     private static final String TYPE = "Compute";
-    private static final int DC_PES_TYPE = 4;
-    private static final int MAX_CLOUDLETS = 180;
+    private static final int DC_PES_TYPE = 0;
+    private static final int MAX_CLOUDLETS = 200;
     private static final int MAX_TIME = 500;
 
     public static void main(String[] args) {
@@ -189,13 +189,13 @@ public class HybridCloudTest2 {
         final long seed = 1;
 
         if (DC_PES_TYPE == 0) {
-            DC_HOST_PES = new int[][]{{16, 16, 16, 32, 8, 8, 16}, {16, 32, 16, 32, 64}};
+            DC_HOST_PES = new int[][]{{16, 16, 16, 32, 8, 8, 16}, {8, 32, 16, 32, 64}};
         } else if (DC_PES_TYPE == 1) {
             DC_HOST_PES = new int[][]{{16, 16, 16, 32, 8, 8, 16}, {8, 32, 16, 16, 48}};
         } else if (DC_PES_TYPE == 2) {
             DC_HOST_PES = new int[][]{{16, 16, 16, 32, 8, 8, 16}, {32, 16, 8, 32, 32}};
         } else if (DC_PES_TYPE == 3){
-            DC_HOST_PES = new int[][]{{16, 16, 16, 32, 8, 8, 16}, {16, 16, 16, 32, 64}};
+            DC_HOST_PES = new int[][]{{16, 16, 16, 32, 8, 8, 16}, {16, 8, 16, 32, 64}};
         } else {
             DC_HOST_PES = new int[][]{{16, 16, 16, 32, 8, 8, 16}, {32, 32, 16, 16, 8}};
         }
@@ -465,8 +465,8 @@ public class HybridCloudTest2 {
     private Datacenter createDatacenter(int index) {
         final var distribution = index % 2 == 0 ? DatacenterCharacteristics.Distribution.PRIVATE : DatacenterCharacteristics.Distribution.PUBLIC;
         final var newHostList = new ArrayList<Host>(DC_HOST_PES[index].length);
-        final var allocationPolicy = new VmAllocationPolicySimple();
-        allocationPolicy.setFindHostForVmFunction(this::findMaxMinHostForVm);
+        final var allocationPolicy = new VmAllocationPolicyRoundRobin();
+//        allocationPolicy.setFindHostForVmFunction(this::findMaxMinHostForVm);
         for (int i = 0; i < DC_HOST_PES[index].length; i++) {
             newHostList.add(createHost(DC_HOST_PES[index][i]));
         }
