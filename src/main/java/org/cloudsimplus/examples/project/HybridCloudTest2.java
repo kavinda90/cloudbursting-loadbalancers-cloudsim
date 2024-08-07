@@ -21,6 +21,7 @@ import org.cloudsimplus.core.Identifiable;
 import org.cloudsimplus.core.Simulation;
 import org.cloudsimplus.datacenters.Datacenter;
 import org.cloudsimplus.datacenters.DatacenterCharacteristics;
+import org.cloudsimplus.datacenters.DatacenterCharacteristicsSimple;
 import org.cloudsimplus.datacenters.DatacenterSimple;
 import org.cloudsimplus.distributions.ContinuousDistribution;
 import org.cloudsimplus.distributions.UniformDistr;
@@ -40,6 +41,7 @@ import org.cloudsimplus.utilizationmodels.UtilizationModelDynamic;
 import org.cloudsimplus.utilizationmodels.UtilizationModelFull;
 import org.cloudsimplus.utilizationmodels.UtilizationModelStochastic;
 import org.cloudsimplus.vms.Vm;
+import org.cloudsimplus.vms.VmCost;
 import org.cloudsimplus.vms.VmSimple;
 
 import java.util.*;
@@ -100,6 +102,8 @@ public class HybridCloudTest2 {
      */
     private static final int SCHEDULING_INTERVAL = 2;
 
+    private static final int MAX_TIME = 200;
+
     private static final double VM_OVERLOAD_THRESHOLD = 0.7;
     private static final double DC_OVERLOAD_THRESHOLD = 0.7;
 
@@ -111,7 +115,7 @@ public class HybridCloudTest2 {
 //    private static final int HOSTS = 2;
 //    private static final int HOST_PES = 8;
 
-    private static final int[][] DC_HOST_PES = {{8, 16, 32}, {16, 16, 32, 32}};
+    private static final int[][] DC_HOST_PES = {{16, 8, 32}, {16, 32, 16, 32}};
     private static final int VMS = 4;
     private static final int CLOUDLETS = 10;
     private final CloudSimPlus simulation;
@@ -131,6 +135,9 @@ public class HybridCloudTest2 {
     private static final int CLOUDLETS_INITIAL_LENGTH = 20_000;
 
     private int lastHostIndex;
+
+
+    private double totalCpuUsageMean;
 
     //ACO variables
 
@@ -175,7 +182,7 @@ public class HybridCloudTest2 {
 
         simulation = new CloudSimPlus();
         simulation.addOnClockTickListener(this::createNewCloudlets);
-        simulation.addOnClockTickListener(this::onClockTickListener);
+//        simulation.addOnClockTickListener(this::onClockTickListener);
 
         datacenterList = createDatacenters();
         broker0 = createBroker();
@@ -200,6 +207,77 @@ public class HybridCloudTest2 {
         simulation.start();
 
         printSimulationResults();
+
+        printPerformanceStatistics(broker0.getCloudletFinishedList());
+        printTotalVmsCost(broker0);
+    }
+
+    private void printPerformanceStatistics(List<Cloudlet> finishedCloudlets) {
+        double totalResponseTime = 0;
+
+        for (Cloudlet cloudlet : finishedCloudlets) {
+            totalResponseTime += cloudlet.getFinishTime() - cloudlet.getCreationTime();
+        }
+
+        double avgResponseTime = totalResponseTime / finishedCloudlets.size();
+        double makespan = finishedCloudlets.stream().mapToDouble(Cloudlet::getFinishTime).max().orElse(0);
+        double throughput = finishedCloudlets.size() / makespan;
+
+        System.out.println("\nAverage Response Time: " + avgResponseTime + " seconds");
+        System.out.println("Makespan: " + makespan + " seconds");
+        System.out.println("Throughput: " + throughput + " cloudlets/second\n");
+
+        datacenterList.stream()
+                .map(Datacenter::getHostList).flatMap(List::stream)
+                .filter(h -> !h.getStateHistory().isEmpty())
+                .forEach(this::printCpuUtilizationForHost);
+        var totalHostCount = datacenterList.stream()
+                .map(Datacenter::getHostList).mapToInt(List::size).sum();
+        System.out.printf("Average Host CPU usage: %6.2f%%%n", totalCpuUsageMean/totalHostCount);
+    }
+
+    /**
+     * Shows CPU utilization mean of a host in a given Datacenter.
+     */
+    private void printCpuUtilizationForHost(Host host) {
+        final double mipsByPe = host.getTotalMipsCapacity() / (double)host.getPesNumber();
+        final double cpuUsageMean = host.getCpuUtilizationStats().getMean()*100;
+        totalCpuUsageMean += cpuUsageMean;
+        System.out.printf(
+                "Host %d: PEs number: %2d MIPS by PE: %.0f CPU Utilization mean: %6.2f%%%n",
+                host.getId(), host.getPesNumber(), mipsByPe, cpuUsageMean);
+    }
+
+    /**
+     * Computes and print the cost ($) of resources (processing, bw, memory, storage)
+     * for each VM inside the datacenter.
+     */
+    private void printTotalVmsCost(DatacenterBroker broker) {
+        System.out.println();
+        double totalCost = 0.0;
+        int totalNonIdleVms = 0;
+        double processingTotalCost = 0, memoryTotaCost = 0, storageTotalCost = 0, bwTotalCost = 0, privateDcCost = 0;
+        for (final Vm vm : broker.getVmCreatedList()) {
+            if(vm.getHost().getDatacenter().getCharacteristics().getDistribution() == DatacenterCharacteristics.Distribution.PUBLIC) {
+                final var cost = new VmCost(vm);
+                processingTotalCost += cost.getProcessingCost();
+                memoryTotaCost += cost.getMemoryCost();
+                storageTotalCost += cost.getStorageCost();
+                bwTotalCost += cost.getBwCost();
+
+                totalCost += cost.getTotalCost();
+                totalNonIdleVms += vm.getTotalExecutionTime() > 0 ? 1 : 0;
+            } else {
+                privateDcCost += vm.getTotalExecutionTime() * 0.01;
+                totalCost += vm.getTotalExecutionTime() * 0.01;
+            }
+
+        }
+
+        System.out.printf(
+                "Total cost ($) for %3d created VMs from %3d: %8.2f$ %13.2f$ %17.2f$ %12.2f$ %12.2f$ %15.2f$%n",
+                totalNonIdleVms, broker.getVmsNumber(),
+                processingTotalCost, memoryTotaCost, storageTotalCost, bwTotalCost, privateDcCost, totalCost);
     }
 
     private DatacenterBrokerSimple createBroker() {
@@ -281,7 +359,7 @@ public class HybridCloudTest2 {
      */
     private void createNewCloudlets(final EventInfo info) {
         final long time = (long) info.getTime();
-        if (time % 10 == 0 && time <= 40) {
+        if (time % 10 == 0 && time <= MAX_TIME) {
             final int cloudletsNumber = 4;
             System.out.printf("\t#Creating %d Cloudlets at time %d.%n", cloudletsNumber, time);
             final List<Cloudlet> newCloudlets = new ArrayList<>(cloudletsNumber);
@@ -364,13 +442,14 @@ public class HybridCloudTest2 {
         final var distribution = index % 2 == 0 ? DatacenterCharacteristics.Distribution.PRIVATE : DatacenterCharacteristics.Distribution.PUBLIC;
         final var newHostList = new ArrayList<Host>(DC_HOST_PES[index].length);
         final var allocationPolicy = new VmAllocationPolicyRoundRobin();
-        allocationPolicy.setFindHostForVmFunction(this::findGeneticHostForVm);
+        allocationPolicy.setFindHostForVmFunction(this::findLeastConnectionHostForVm);
         for (int i = 0; i < DC_HOST_PES[index].length; i++) {
             newHostList.add(createHost(DC_HOST_PES[index][i]));
         }
         final var dc = new DatacenterSimple(simulation, newHostList, allocationPolicy);
         dc.setSchedulingInterval(SCHEDULING_INTERVAL)
             .setHostSearchRetryDelay(10)
+            .setCharacteristics(new DatacenterCharacteristicsSimple(0.01, 0.0001, 0.00001, 0.00001))
             .getCharacteristics()
             .setDistribution(distribution);
 
@@ -387,7 +466,9 @@ public class HybridCloudTest2 {
         final long ram = 2048; // in Megabytes
         final long storage = 1000000; // in Megabytes
         final long bw = 10000; //in Megabits/s
-        return new HostSimple(ram, bw, storage, peList).setStateHistoryEnabled(true);
+        var host =  new HostSimple(ram, bw, storage, peList).setStateHistoryEnabled(true);
+        host.enableUtilizationStats();
+        return host;
     }
 
     /**
