@@ -158,6 +158,13 @@ public class HybridCloudTest2 {
     private static final double MUTATION_RATE = 0.01;
     private static final double CROSSOVER_RATE = 0.9;
 
+    // Honey bee variables
+
+    private static final int HONEY_POPULATION_SIZE = 50;
+    private static final int HONEY_MAX_ITERATIONS = 1000;
+    private static final int HONEY_LIMIT = 100;  // Limit for abandoning a food source
+    private static final double WAGGLE_DANCE_PROBABILITY = 0.1;  // Probability for waggle dance
+
 
     private int[][] DC_HOST_PES = {{16, 32, 16, 32}, {16, 32, 16, 64, 32}};
     private static final String TYPE = "Compute";
@@ -182,15 +189,15 @@ public class HybridCloudTest2 {
         final long seed = 1;
 
         if (DC_PES_TYPE == 0) {
-            DC_HOST_PES = new int[][]{{16, 32, 16, 32}, {16, 32, 16, 32, 64}};
+            DC_HOST_PES = new int[][]{{16, 16, 16, 32, 8, 8, 16}, {16, 32, 16, 32, 64}};
         } else if (DC_PES_TYPE == 1) {
-            DC_HOST_PES = new int[][]{{16, 32, 16, 32}, {8, 32, 16, 16, 48}};
+            DC_HOST_PES = new int[][]{{16, 16, 16, 32, 8, 8, 16}, {8, 32, 16, 16, 48}};
         } else if (DC_PES_TYPE == 2) {
-            DC_HOST_PES = new int[][]{{16, 32, 16, 32}, {32, 16, 8, 32, 32}};
+            DC_HOST_PES = new int[][]{{16, 16, 16, 32, 8, 8, 16}, {32, 16, 8, 32, 32}};
         } else if (DC_PES_TYPE == 3){
-            DC_HOST_PES = new int[][]{{16, 32, 16, 32}, {16, 16, 16, 32, 64}};
+            DC_HOST_PES = new int[][]{{16, 16, 16, 32, 8, 8, 16}, {16, 16, 16, 32, 64}};
         } else {
-            DC_HOST_PES = new int[][]{{16, 32, 16, 32}, {32, 32, 16, 16, 8}};
+            DC_HOST_PES = new int[][]{{16, 16, 16, 32, 8, 8, 16}, {32, 32, 16, 16, 8}};
         }
 
 //        rand = new UniformDistr(0, CLOUDLET_LENGTHS.length);
@@ -452,76 +459,14 @@ public class HybridCloudTest2 {
         }
     }
 
-    private void createCloudletListsWithDifferentDelays() {
-        final int initialCloudletsNumber = (int)(CLOUDLETS/2.5);
-        final int remainingCloudletsNumber = CLOUDLETS-initialCloudletsNumber;
-        //Creates a List of Cloudlets that will start running immediately when the simulation starts
-        for (int i = 0; i < initialCloudletsNumber; i++) {
-            cloudletList.add(createCloudletDelay(CLOUDLETS_INITIAL_LENGTH+(i*1000), 2));
-        }
-
-        /*
-         * Creates several Cloudlets, increasing the arrival delay and decreasing
-         * the length of each one.
-         * The progressing delay enables CPU usage to increase gradually along the arrival of
-         * new Cloudlets (triggering CPU up scaling at some point in time).
-         *
-         * The decreasing length enables Cloudlets to finish in different times,
-         * to gradually reduce CPU usage (triggering CPU down scaling at some point in time).
-         *
-         * Check the logs to understand how the scaling is working.
-         */
-        for (int i = 1; i <= remainingCloudletsNumber; i++) {
-            cloudletList.add(createCloudletDelay(CLOUDLETS_INITIAL_LENGTH*2/i, 1,i*2));
-        }
-    }
-
-    private Cloudlet createCloudletDelay(final long length, final int pesNumber) {
-        return createCloudletDelay(length, pesNumber, 0);
-    }
-
-    private Cloudlet createCloudletDelay(final long length, final int pesNumber, final double delay) {
-        /*
-        Since a VM PE isn't used by two Cloudlets at the same time,
-        the Cloudlet can use 100% of that CPU capacity at the time
-        it is running. Even if a CloudletSchedulerTimeShared is used
-        to share the same VM PE among multiple Cloudlets,
-        just one Cloudlet uses the PE at a time.
-        Then it is preempted to enable other Cloudlets to use such a VM PE.
-         */
-        final var utilizationCpu = new UtilizationModelFull();
-
-        /**
-         * Since BW e RAM are shared resources that don't enable preemption,
-         * two Cloudlets can't use the same portion of such resources at the same time
-         * (unless virtual memory is enabled, but such a feature is not available in simulation).
-         * This way, the total capacity of such resources is being evenly split among created Cloudlets.
-         * If there are 10 Cloudlets, each one will use just 10% of such resources.
-         * This value can be defined in different ways, as you want. For instance, some Cloudlets
-         * can require more resources than other ones.
-         * To enable that, you would need to instantiate specific {@link UtilizationModelDynamic} for each Cloudlet,
-         * use a {@link UtilizationModelStochastic} to define resource usage randomly,
-         * or use any other {@link UtilizationModel} implementation.
-         */
-        final var utilizationModelDynamic = new UtilizationModelDynamic(1.0/CLOUDLETS);
-        final var cl = new CloudletSimple(length, pesNumber);
-        cl.setFileSize(1024)
-                .setOutputSize(1024)
-                .setUtilizationModelBw(utilizationModelDynamic)
-                .setUtilizationModelRam(utilizationModelDynamic)
-                .setUtilizationModelCpu(utilizationCpu)
-                .setSubmissionDelay(delay);
-        return cl;
-    }
-
     /**
      * Creates a Datacenter and its Hosts.
      */
     private Datacenter createDatacenter(int index) {
         final var distribution = index % 2 == 0 ? DatacenterCharacteristics.Distribution.PRIVATE : DatacenterCharacteristics.Distribution.PUBLIC;
         final var newHostList = new ArrayList<Host>(DC_HOST_PES[index].length);
-        final var allocationPolicy = new VmAllocationPolicyRoundRobin();
-//        allocationPolicy.setFindHostForVmFunction(this::findGeneticHostForVm);
+        final var allocationPolicy = new VmAllocationPolicySimple();
+        allocationPolicy.setFindHostForVmFunction(this::findMaxMinHostForVm);
         for (int i = 0; i < DC_HOST_PES[index].length; i++) {
             newHostList.add(createHost(DC_HOST_PES[index][i]));
         }
@@ -995,10 +940,22 @@ public class HybridCloudTest2 {
 
     private double evaluateFitness(int[] individual, List<Host> hostList, Vm vm) {
         double fitness = 0.0;
+        double totalAvailableMips = hostList.stream().mapToDouble(Host::getTotalAvailableMips).max().orElse(1);
+        double totalAvailableRam = hostList.stream().mapToDouble(host -> host.getRamProvisioner().getAvailableResource()).max().orElse(1);
+        double totalAvailableStorage = hostList.stream().mapToDouble(Host::getAvailableStorage).max().orElse(1);
+
+        double cpuWeight = 0.5;
+        double ramWeight = 0.3;
+        double storageWeight = 0.2;
+
         for (int hostIndex : individual) {
             Host host = hostList.get(hostIndex);
             if (host.isSuitableForVm(vm)) {
-                fitness += host.getTotalAvailableMips();
+                double normalizedCpu = (host.getTotalAvailableMips() - host.getCpuMipsUtilization()) / totalAvailableMips;
+                double normalizedRam = host.getRamProvisioner().getAvailableResource() / totalAvailableRam;
+                double normalizedStorage = host.getAvailableStorage() / totalAvailableStorage;
+
+                fitness += (normalizedCpu * cpuWeight) + (normalizedRam * ramWeight) + (normalizedStorage * storageWeight);
             }
         }
         return fitness;
@@ -1053,6 +1010,211 @@ public class HybridCloudTest2 {
         }
 
         return Optional.empty();
+    }
+
+    public Optional<Host> findHoneyBeeHostForVm(VmAllocationPolicy vmAllocationPolicy, Vm vm) {
+        List<Host> hostList = vmAllocationPolicy.getHostList();
+        List<int[]> population = initializeHoneyPopulation(hostList.size(), HONEY_POPULATION_SIZE);
+
+        double[] fitness = new double[HONEY_POPULATION_SIZE];
+        int[] trial = new int[HONEY_POPULATION_SIZE];
+
+        for (int i = 0; i < HONEY_POPULATION_SIZE; i++) {
+            fitness[i] = evaluateFitness(population.get(i), hostList, vm);
+        }
+
+        for (int iter = 0; iter < HONEY_MAX_ITERATIONS; iter++) {
+            // Employed bee phase
+            for (int i = 0; i < HONEY_POPULATION_SIZE; i++) {
+                int[] newSolution = generateNeighborSolution(population.get(i), hostList.size());
+                double newFitness = evaluateFitness(newSolution, hostList, vm);
+
+                if (newFitness > fitness[i]) {
+                    population.set(i, newSolution);
+                    fitness[i] = newFitness;
+                    trial[i] = 0;
+                } else {
+                    trial[i]++;
+                }
+            }
+
+            // Onlooker bee phase
+            for (int i = 0; i < HONEY_POPULATION_SIZE; i++) {
+                if (random.nextDouble() < probability(fitness, i)) {
+                    int[] newSolution = generateNeighborSolution(population.get(i), hostList.size());
+                    double newFitness = evaluateFitness(newSolution, hostList, vm);
+
+                    if (newFitness > fitness[i]) {
+                        population.set(i, newSolution);
+                        fitness[i] = newFitness;
+                        trial[i] = 0;
+                    } else {
+                        trial[i]++;
+                    }
+                }
+            }
+
+            // Scout bee phase
+            for (int i = 0; i < HONEY_POPULATION_SIZE; i++) {
+                if (trial[i] > HONEY_LIMIT) {
+                    population.set(i, initializeSolution(hostList.size()));
+                    fitness[i] = evaluateFitness(population.get(i), hostList, vm);
+                    trial[i] = 0;
+                }
+            }
+        }
+
+        return selectBestHostHoneyBee(population, hostList, vm);
+    }
+
+    private List<int[]> initializeHoneyPopulation(int hostCount, int populationSize) {
+        return IntStream.range(0, populationSize)
+                .mapToObj(i -> initializeSolution(hostCount))
+                .collect(Collectors.toList());
+    }
+
+    private int[] initializeSolution(int hostCount) {
+        return IntStream.range(0, hostCount)
+                .map(i -> random.nextInt(hostCount))
+                .toArray();
+    }
+
+    private int[] generateNeighborSolution(int[] solution, int hostCount) {
+        int[] newSolution = Arrays.copyOf(solution, solution.length);
+        int index = random.nextInt(solution.length);
+        newSolution[index] = random.nextInt(hostCount);
+        return newSolution;
+    }
+
+    private double probability(double[] fitness, int index) {
+        double sumFitness = Arrays.stream(fitness).sum();
+        return fitness[index] / sumFitness;
+    }
+
+    private Optional<Host> selectBestHostHoneyBee(List<int[]> population, List<Host> hostList, Vm vm) {
+        int[] bestSolution = null;
+        double bestFitness = Double.MIN_VALUE;
+
+        for (int[] solution : population) {
+            double fitness = evaluateFitness(solution, hostList, vm);
+            if (fitness > bestFitness) {
+                bestFitness = fitness;
+                bestSolution = solution;
+            }
+        }
+
+        if (bestSolution != null) {
+            for (int hostIndex : bestSolution) {
+                Host host = hostList.get(hostIndex);
+                if (host.isSuitableForVm(vm) && host.getCpuPercentUtilization() < DC_OVERLOAD_THRESHOLD) {
+                    return Optional.of(host);
+                }
+            }
+        }
+
+        return Optional.empty();
+    }
+
+    public Optional<Host> findMinMinHostForVm(VmAllocationPolicy vmAllocationPolicy, Vm vm) {
+        List<Host> hostList = vmAllocationPolicy.getHostList();
+
+        // Initialize the completion time matrix
+        double[][] completionTimes = new double[hostList.size()][1];
+        for (int i = 0; i < hostList.size(); i++) {
+            completionTimes[i][0] = calculateMinMinCompletionTime(hostList.get(i), vm);
+        }
+
+        // Allocate VM using Min-Min algorithm
+        while (true) {
+            double minCompletionTime = Double.MAX_VALUE;
+            int bestHostIndex = -1;
+
+            // Find the host with the minimum completion time for the VM
+            for (int i = 0; i < hostList.size(); i++) {
+                if (completionTimes[i][0] < minCompletionTime) {
+                    minCompletionTime = completionTimes[i][0];
+                    bestHostIndex = i;
+                }
+            }
+
+            if (bestHostIndex == -1) {
+                break;  // No suitable host found
+            }
+
+            Host bestHost = hostList.get(bestHostIndex);
+
+            if (bestHost.isSuitableForVm(vm)) {
+                return Optional.of(bestHost);  // Return the best host for the VM
+            } else {
+                // If the host is not suitable, mark it as infeasible and continue
+                completionTimes[bestHostIndex][0] = Double.MAX_VALUE;
+            }
+        }
+
+        return Optional.empty();  // No suitable host found
+    }
+
+    private double calculateMinMinCompletionTime(Host host, Vm vm) {
+        if (!host.isSuitableForVm(vm)) {
+            return Double.MAX_VALUE;
+        }
+
+        double currentMips = host.getTotalMipsCapacity() - host.getTotalAvailableMips();
+        double requiredMips = vm.getTotalCpuMipsRequested();
+        double completionTime = (requiredMips / host.getTotalMipsCapacity()) + currentMips;
+
+        return completionTime;
+    }
+
+    public Optional<Host> findMaxMinHostForVm(VmAllocationPolicy vmAllocationPolicy, Vm vm) {
+        List<Host> hostList = vmAllocationPolicy.getHostList();
+
+        // Initialize the completion time matrix
+        double[][] completionTimes = new double[hostList.size()][1];
+        for (int i = 0; i < hostList.size(); i++) {
+            completionTimes[i][0] = calculateMaxMinCompletionTime(hostList.get(i), vm);
+        }
+
+        // Allocate VM using Max-Min algorithm
+        while (true) {
+            double maxCompletionTime = Double.MIN_VALUE;
+            int bestHostIndex = -1;
+
+            // Find the host with the maximum completion time for the VM
+            for (int i = 0; i < hostList.size(); i++) {
+                if (completionTimes[i][0] > maxCompletionTime) {
+                    maxCompletionTime = completionTimes[i][0];
+                    bestHostIndex = i;
+                }
+            }
+
+            if (bestHostIndex == -1) {
+                break;  // No suitable host found
+            }
+
+            Host bestHost = hostList.get(bestHostIndex);
+
+            if (bestHost.isSuitableForVm(vm)) {
+                return Optional.of(bestHost);  // Return the best host for the VM
+            } else {
+                // If the host is not suitable, mark it as infeasible and continue
+                completionTimes[bestHostIndex][0] = Double.MIN_VALUE;
+            }
+        }
+
+        return Optional.empty();  // No suitable host found
+    }
+
+    private double calculateMaxMinCompletionTime(Host host, Vm vm) {
+        if (!host.isSuitableForVm(vm)) {
+            return Double.MIN_VALUE;
+        }
+
+        double currentMips = host.getTotalMipsCapacity() - host.getTotalAvailableMips();
+        double requiredMips = vm.getTotalCpuMipsRequested();
+        double completionTime = (requiredMips / host.getTotalMipsCapacity()) + currentMips;
+
+        return completionTime;
     }
 
 }
