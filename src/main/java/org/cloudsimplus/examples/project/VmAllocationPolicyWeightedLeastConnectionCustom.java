@@ -29,6 +29,7 @@ public class VmAllocationPolicyWeightedLeastConnectionCustom extends VmAllocatio
         double leastWeight = Double.MAX_VALUE;
 
         for (Host host : hostList) {
+            System.out.println("utlization of " + host + " - " + host.getCpuPercentUtilization());
             if (predicate.test(host)) {
                 double weight = calculateHostWeight(host, vm);
                 if (leastHost == null || weight < leastWeight) {

@@ -138,7 +138,8 @@ public class VmAllocationPolicyAcoCustom extends VmAllocationPolicyMigrationAbst
             }
 
             if (quality > bestQuality) {
-                if(predicate.test(hostList.get(i))) {
+                System.out.println("utlization of " + hostList.get(i) + " - " + hostList.get(i).getCpuPercentUtilization());
+                if(predicate.test(hostList.get(i)) && hostList.get(i).getCpuPercentUtilization() < overUtilizationThreshold) {
                     bestQuality = quality;
                     bestHost = hostList.get(i);
                 }

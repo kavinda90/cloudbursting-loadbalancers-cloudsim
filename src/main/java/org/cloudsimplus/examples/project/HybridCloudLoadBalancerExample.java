@@ -48,6 +48,7 @@ import org.cloudsimplus.resources.Pe;
 import org.cloudsimplus.resources.PeSimple;
 import org.cloudsimplus.schedulers.vm.VmSchedulerTimeShared;
 import org.cloudsimplus.selectionpolicies.VmSelectionPolicyMinimumUtilization;
+import org.cloudsimplus.traces.SwfWorkloadFileReader;
 import org.cloudsimplus.util.Log;
 import org.cloudsimplus.utilizationmodels.UtilizationModel;
 import org.cloudsimplus.utilizationmodels.UtilizationModelDynamic;
@@ -138,7 +139,8 @@ public final class HybridCloudLoadBalancerExample {
      *
      * <p>The total number of items define the number of Hosts to create.</p>
      */
-    private static final int[][] DC_HOST_PES = {{4, 5}, {4, 4, 4, 8}};
+//    private static final int[][] DC_HOST_PES = {{4, 5, 4, 5, 3}, {4, 4, 4, 8, 4, 4, 5, 8}};
+    private static final int[][] DC_HOST_PES = {{4, 5}, {16, 16, 16, 32}};
 
     /**
      * The percentage of host CPU usage that trigger VM migration
@@ -178,7 +180,8 @@ public final class HybridCloudLoadBalancerExample {
      * RAM capacity for created Hosts.
      * The length of this array must be the length of the largest row on {@link #DC_HOST_PES} matrix.
      */
-    private static final long[] HOST_RAM = {100_000, 100_000, 100_000, 100_000}; //host memory (MB)
+//    private static final long[] HOST_RAM = {100_000, 100_000, 100_000, 100_000, 100_000, 100_000, 100_000, 100_000}; //host memory (MB)
+    private static final long[] HOST_RAM = {500_000, 500_000, 500_000, 500_000}; //host memory (MB)
 
     private static final long   HOST_STORAGE = 1_000_000; //host storage (MB)
 
@@ -189,12 +192,13 @@ public final class HybridCloudLoadBalancerExample {
      * <p>The length of this matrix (number of rows) must be equal to the number of datacenters,
      * defined by the length of {@link #DC_HOST_PES}.</p>
      */
-    private static final int[][] VM_PES = {{2,2,2,2,2,2,2}, {}};
+//    private static final int[][] VM_PES = {{2, 2, 2, 2, 2, 2, 2, 2, 2, 2}, {}};
+    private static final int[][] VM_PES = {{2, 2, 2, 2, 2, 2, 2}, {}};
 
     private static final int    VM_MIPS = 1000; //for each PE
     private static final long   VM_SIZE = 100_000; //image size (MB)
-    private static final int    VM_RAM  = 6_000; //VM memory (MB)
-    private static final long   VM_BW   = 2000; //Mbps
+    private static final int    VM_RAM  = 30_000; //VM memory (MB)
+    private static final long   VM_BW   = 5_000; //Mbps
 
     private static final long   CLOUDLET_LENGTH = 50_000;
     private static final long   CLOUDLET_FILESIZE = 300;
@@ -227,6 +231,9 @@ public final class HybridCloudLoadBalancerExample {
     private int createdCloudlets;
     private int createdHosts;
 
+    private static final String WORKLOAD_FILENAME = "workload/swf/NASA-iPSC-1993-3.1-cln.swf.gz";
+    private int maxCloudletsToCreateFromWorkloadFile = Integer.MAX_VALUE;
+
     public static void main(final String[] args) {
         new HybridCloudLoadBalancerExample();
     }
@@ -240,6 +247,9 @@ public final class HybridCloudLoadBalancerExample {
 
         this.datacenterList = createDatacenters();
         this.brokerList = createBrokers();
+        for (final DatacenterBroker broker : brokerList) {
+            broker.setVmDestructionDelayFunction(vm -> 5.0);
+        }
         createVmsAndCloudlets();
 
         // Allocate VMs to hosts using Min-Min
@@ -281,7 +291,7 @@ public final class HybridCloudLoadBalancerExample {
      */
     private VmAllocationPolicyMigration createVmAllocationPolicy() {
         final var vmSelection = new VmSelectionPolicyMinimumUtilization();
-        final var vmAllocation = new VmAllocationPolicyHoneyBeeCustom(vmSelection, 0.9);
+        final var vmAllocation = new VmAllocationPolicyWeightedLeastConnectionCustom(vmSelection, 0.9);
 
         vmAllocation.setUnderUtilizationThreshold(HOST_UNDER_UTILIZATION_THRESHOLD_FOR_VM_MIGRATION);
         return vmAllocation;
@@ -356,7 +366,7 @@ public final class HybridCloudLoadBalancerExample {
 
         System.out.printf("# %d VMs submitted to %s have been created. VMs: %s.%n", broker.getVmCreatedList().size(), broker, vmIds);
         datacenterList.stream()
-                .map(dc -> (VmAllocationPolicyHoneyBeeCustom)dc.getVmAllocationPolicy())
+                .map(dc -> (VmAllocationPolicyWeightedLeastConnectionCustom)dc.getVmAllocationPolicy())
                 .forEach(policy -> policy.setOverUtilizationThreshold(HOST_OVER_UTILIZATION_THRESHOLD_FOR_VM_MIGRATION));
         broker.removeOnVmsCreatedListener(info.getListener());
     }
@@ -365,14 +375,55 @@ public final class HybridCloudLoadBalancerExample {
         final var cloudletList = new ArrayList<Cloudlet>(VM_PES.length);
         final UtilizationModelDynamic um = createCpuUtilizationModel(CLOUDLET_INITIAL_CPU_PERCENTAGE, 1);
         for(final var vm: broker.getVmWaitingList()){
+            createDataIntensiveCloudlets(vm, cloudletList, um);
 //            for(int i=0; i<2; i++) {
-                final var cloudlet = createCloudlet(vm, um);
-                cloudletList.add(cloudlet);
+//                final var cloudlet = createCloudlet(vm, um);
+//                cloudletList.add(cloudlet);
 //            }
 
         }
+//        createCloudletsFromWorkloadFile(cloudletList, broker);
+
 
         broker.submitCloudletList(cloudletList);
+    }
+
+    public void createComputeIntensiveCloudlets(final Vm vm, List<Cloudlet> cloudletList, UtilizationModelDynamic um) {
+        // Create compute-intensive cloudlets
+        final var broker = vm.getBroker();
+        for (int i = 0; i < 3; i++) {
+            Cloudlet cloudlet = new CloudletSimple(createdCloudlets++, 100_000, vm.getPesNumber())
+                    .setFileSize(300)
+                    .setOutputSize(300)
+                    .setUtilizationModelRam(new UtilizationModelDynamic(0.2))
+                    .setUtilizationModelBw(new UtilizationModelDynamic(0.1))
+                    .setUtilizationModelCpu(um);
+            cloudletList.add(cloudlet);
+            broker.bindCloudletToVm(cloudlet, vm);
+        }
+    }
+
+    public void createDataIntensiveCloudlets(final Vm vm, List<Cloudlet> cloudletList, UtilizationModelDynamic um) {
+        // Create data-intensive cloudlets
+        final var broker = vm.getBroker();
+        for (int i = 0; i < 3; i++) {
+            Cloudlet cloudlet = new CloudletSimple(createdCloudlets++, 50_000, vm.getPesNumber())
+                    .setFileSize(10_000)
+                    .setOutputSize(10_000)
+                    .setUtilizationModelRam(new UtilizationModelDynamic(0.4))
+                    .setUtilizationModelBw(new UtilizationModelDynamic(0.4))
+                    .setUtilizationModelCpu(um);
+            cloudletList.add(cloudlet);
+            broker.bindCloudletToVm(cloudlet, vm);
+        }
+    }
+
+    private void createCloudletsFromWorkloadFile(List<Cloudlet> cloudletList, DatacenterBroker broker) {
+        final var reader = SwfWorkloadFileReader.getInstance(WORKLOAD_FILENAME, VM_MIPS);
+        reader.setMaxLinesToRead(maxCloudletsToCreateFromWorkloadFile);
+        cloudletList = reader.generateWorkload();
+
+        System.out.printf("# Created %12d Cloudlets for %s%n", cloudletList.size(), broker);
     }
 
     /**

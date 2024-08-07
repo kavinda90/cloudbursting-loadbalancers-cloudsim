@@ -33,7 +33,7 @@ public class VmAllocationPolicyHoneyBeeCustom extends VmAllocationPolicyMigratio
 
     private List<Host> scoutBeesPhase(List<Host> hostList) {
         List<Host> potentialHosts = new ArrayList<>();
-        int scoutCount = (int) (hostList.size() * 0.5); // 50% hosts are scouts
+        int scoutCount = (int) (hostList.size() * 0.3); // 30% hosts are scouts
 
         for (int i = 0; i < scoutCount; i++) {
             Host host = hostList.get(random.nextInt(hostList.size()));

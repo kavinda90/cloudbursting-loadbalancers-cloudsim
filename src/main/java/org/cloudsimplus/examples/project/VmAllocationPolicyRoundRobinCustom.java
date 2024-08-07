@@ -44,4 +44,8 @@ public class VmAllocationPolicyRoundRobinCustom extends VmAllocationPolicyMigrat
         return Optional.empty();
     }
 
+    public boolean isUnderloaded(Host host) {
+        return false;
+    }
+
 }
