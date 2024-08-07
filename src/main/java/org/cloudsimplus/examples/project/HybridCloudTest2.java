@@ -360,6 +360,8 @@ public class HybridCloudTest2 {
 
         new CloudletsTableBuilder(cloudletFinishedList).build();
 
+        System.out.println("Total finished cloudlet count is " + cloudletFinishedList.size());
+
 //        printHostStateHistory();
     }
     private void printHostStateHistory() {
