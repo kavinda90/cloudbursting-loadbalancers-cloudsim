@@ -38,6 +38,7 @@ import org.cloudsimplus.core.CloudSimPlus;
 import org.cloudsimplus.datacenters.Datacenter;
 import org.cloudsimplus.datacenters.DatacenterCharacteristics;
 import org.cloudsimplus.datacenters.DatacenterCharacteristics.Distribution;
+import org.cloudsimplus.datacenters.DatacenterCharacteristicsSimple;
 import org.cloudsimplus.datacenters.DatacenterSimple;
 import org.cloudsimplus.hosts.Host;
 import org.cloudsimplus.hosts.HostSimple;
@@ -53,12 +54,10 @@ import org.cloudsimplus.util.Log;
 import org.cloudsimplus.utilizationmodels.UtilizationModel;
 import org.cloudsimplus.utilizationmodels.UtilizationModelDynamic;
 import org.cloudsimplus.vms.Vm;
+import org.cloudsimplus.vms.VmCost;
 import org.cloudsimplus.vms.VmSimple;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Comparator;
-import java.util.List;
+import java.util.*;
 import java.util.stream.IntStream;
 
 import static java.util.Comparator.comparingLong;
@@ -230,6 +229,7 @@ public final class HybridCloudLoadBalancerExample {
     private int createdVms;
     private int createdCloudlets;
     private int createdHosts;
+    private double totalCpuUsageMean;
 
     private static final String WORKLOAD_FILENAME = "workload/swf/NASA-iPSC-1993-3.1-cln.swf.gz";
     private int maxCloudletsToCreateFromWorkloadFile = Integer.MAX_VALUE;
@@ -258,6 +258,9 @@ public final class HybridCloudLoadBalancerExample {
         simulation.start();
 
         printResults();
+        printPerformanceStatistics(this.brokerList.get(0).getCloudletCreatedList());
+        printTotalVmsCost(this.brokerList);
+
         System.out.printf("%n%s finished!%n", getClass().getSimpleName());
     }
 
@@ -330,6 +333,69 @@ public final class HybridCloudLoadBalancerExample {
 
     private void printHostStateHistory(final Host host) {
         new HostHistoryTableBuilder(host).setTitle(host.toString()).build();
+    }
+
+    private void printPerformanceStatistics(List<Cloudlet> finishedCloudlets) {
+        double totalResponseTime = 0;
+
+        for (Cloudlet cloudlet : finishedCloudlets) {
+            totalResponseTime += cloudlet.getFinishTime() - cloudlet.getCreationTime();
+        }
+
+        double avgResponseTime = totalResponseTime / finishedCloudlets.size();
+        double makespan = finishedCloudlets.stream().mapToDouble(Cloudlet::getFinishTime).max().orElse(0);
+        double throughput = finishedCloudlets.size() / makespan;
+
+        System.out.println("\nAverage Response Time: " + avgResponseTime + " seconds");
+        System.out.println("Makespan: " + makespan + " seconds");
+        System.out.println("Throughput: " + throughput + " cloudlets/second\n");
+
+        datacenterList.stream()
+                .map(Datacenter::getHostList).flatMap(List::stream)
+                .filter(h -> !h.getStateHistory().isEmpty())
+                .forEach(this::printCpuUtilizationForHost);
+        var totalHostCount = datacenterList.stream()
+                .map(Datacenter::getHostList).mapToInt(List::size).sum();
+        System.out.printf("Average Host CPU usage: %6.2f%%%n", totalCpuUsageMean/totalHostCount);
+    }
+
+    /**
+     * Shows CPU utilization mean of a host in a given Datacenter.
+     */
+    private void printCpuUtilizationForHost(Host host) {
+        final double mipsByPe = host.getTotalMipsCapacity() / (double)host.getPesNumber();
+        final double cpuUsageMean = host.getCpuUtilizationStats().getMean()*100;
+        totalCpuUsageMean += cpuUsageMean;
+        System.out.printf(
+                "Host %d: PEs number: %2d MIPS by PE: %.0f CPU Utilization mean: %6.2f%%%n",
+                host.getId(), host.getPesNumber(), mipsByPe, cpuUsageMean);
+    }
+
+    /**
+     * Computes and print the cost ($) of resources (processing, bw, memory, storage)
+     * for each VM inside the datacenter.
+     */
+    private void printTotalVmsCost(List<DatacenterBrokerSimple> brokerList) {
+        System.out.println();
+        double totalCost = 0.0;
+        int totalNonIdleVms = 0;
+        double processingTotalCost = 0, memoryTotaCost = 0, storageTotalCost = 0, bwTotalCost = 0;
+        for (final Vm vm : brokerList.get(0).getVmCreatedList()) {
+            final var cost = new VmCost(vm);
+            processingTotalCost += cost.getProcessingCost();
+            memoryTotaCost += cost.getMemoryCost();
+            storageTotalCost += cost.getStorageCost();
+            bwTotalCost += cost.getBwCost();
+
+            totalCost += cost.getTotalCost();
+            totalNonIdleVms += vm.getTotalExecutionTime() > 0 ? 1 : 0;
+            System.out.println(cost);
+        }
+
+        System.out.printf(
+                "Total cost ($) for %3d created VMs from %3d in DC %d: %8.2f$ %13.2f$ %17.2f$ %12.2f$ %15.2f$%n",
+                totalNonIdleVms, brokerList.get(0).getVmsNumber(), brokerList.get(0).getId(),
+                processingTotalCost, memoryTotaCost, storageTotalCost, bwTotalCost, totalCost);
     }
 
     /**
@@ -531,6 +597,10 @@ public final class HybridCloudLoadBalancerExample {
         final var dc = new DatacenterSimple(simulation, hostList, allocationPolicy);
         dc.setSchedulingInterval(SCHEDULING_INTERVAL)
                 .setHostSearchRetryDelay(HOST_SEARCH_RETRY_DELAY)
+                // t2.micro
+                .setCharacteristics(new DatacenterCharacteristicsSimple(0.01, 0.0001, 0.00001, 0.00001))
+                // t2.large
+                // .setCharacteristics(new DatacenterCharacteristicsSimple(0.02, 0.0002, 0.00002, 0.00002))
                 .getCharacteristics()
                 .setDistribution(distribution);
 
@@ -558,6 +628,7 @@ public final class HybridCloudLoadBalancerExample {
         host.setId(createdHosts++)
                 .setVmScheduler(new VmSchedulerTimeShared())
                 .setStateHistoryEnabled(true);
+        host.enableUtilizationStats();
         return host;
     }
 
